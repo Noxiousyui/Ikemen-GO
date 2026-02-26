@@ -1,6 +1,13 @@
 name: Android Build CI
 
-on: [workflow_dispatch]
+on: 
+  workflow_dispatch:
+
+# 添加权限声明 - 这是v4版本upload-artifact必需的
+permissions:
+  contents: read
+  actions: write
+  checks: write
 
 jobs:
   build:
@@ -10,85 +17,102 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          submodules: recursive  # 如果有子模块的话
+          submodules: recursive
           
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.21'
+          cache: true  # 启用Go模块缓存，加速构建
           
-      - name: Setup Android SDK Tools
-        uses: android-actions/setup-android@v3
-        
       - name: Setup Java JDK
         uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
           java-version: '17'
         
+      # 修正：使用更稳定的NDK设置方式
       - name: Setup Android NDK
+        id: setup-ndk
         uses: nttld/setup-ndk@v1
         with:
           ndk-version: r26b
+          link-to-sdk: true  # 重要：链接到SDK路径
+
+      # 修正：setup-android 需要在JDK和NDK之后
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: 11076708  # 明确指定版本，避免不稳定
 
       - name: Build Ikemen GO Android
+        env:
+          # 修正：明确设置环境变量，避免路径问题
+          ANDROID_SDK_ROOT: ${{ env.ANDROID_SDK_ROOT }}
+          ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
+          CGO_ENABLED: 1
+          GOOS: android
+          GOARCH: arm64
+          CC: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang
         run: |
-          # 显示当前目录结构以便调试
+          echo "=== Debug Info ==="
           echo "Current directory: $(pwd)"
+          echo "ANDROID_SDK_ROOT: $ANDROID_SDK_ROOT"
+          echo "ANDROID_NDK_ROOT: $ANDROID_NDK_ROOT"
           ls -la
           
-          # 检查是否在 src 子目录
-          if [ -d "src" ]; then
-            echo "Found src directory, entering it..."
-            cd src
+          # 查找项目根目录（包含go.mod的目录）
+          PROJECT_ROOT=""
+          if [ -f "go.mod" ]; then
+            PROJECT_ROOT="."
+          elif [ -f "src/go.mod" ]; then
+            PROJECT_ROOT="src"
+          else
+            echo "Searching for go.mod..."
+            PROJECT_ROOT=$(find . -name "go.mod" -type f -not -path "./.git/*" | head -1 | xargs dirname)
+            if [ -z "$PROJECT_ROOT" ]; then
+              echo "Error: go.mod not found!"
+              exit 1
+            fi
           fi
           
-          # 检查 go.mod 文件位置
-          if [ ! -f "go.mod" ]; then
-            echo "Error: go.mod not found!"
-            find .. -name "go.mod" -type f 2>/dev/null || true
-            exit 1
-          fi
-          
-          echo "Go module found at: $(pwd)"
+          echo "Project root: $PROJECT_ROOT"
+          cd "$PROJECT_ROOT"
           cat go.mod
           
           # 下载依赖
           go mod tidy
           go mod download
           
-          # 设置 Android 环境变量
-          export ANDROID_SDK=$ANDROID_SDK_ROOT
-          export ANDROID_NDK=$ANDROID_NDK_ROOT
-          export CGO_ENABLED=1
-          
-          # 如果是 Android 交叉编译，需要设置目标架构
-          # 常见的 Android 架构: arm64-v8a, armeabi-v7a, x86_64, x86
-          export GOOS=android
-          export GOARCH=arm64
-          export CC=$ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang
-          
           # 构建
+          echo "Starting build..."
           if [ -f "../build_android.sh" ]; then
-            echo "Using build_android.sh script..."
+            echo "Using build_android.sh from parent dir..."
             chmod +x ../build_android.sh
             cd .. && ./build_android.sh
           elif [ -f "build_android.sh" ]; then
-            echo "Using build_android.sh script in current dir..."
+            echo "Using local build_android.sh..."
             chmod +x build_android.sh
             ./build_android.sh
           else
             echo "Building with go build..."
-            go build -v -o Ikemen_GO_android .
+            go build -v -ldflags="-s -w" -o Ikemen_GO_android .
           fi
+          
+      - name: List build outputs
+        run: |
+          echo "=== Build outputs ==="
+          find . -name "*.apk" -o -name "Ikemen_GO_android*" 2>/dev/null | head -20
+          ls -la src/ 2>/dev/null || true
+          ls -la export/ 2>/dev/null || true
           
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Android Build
+          name: Android-Build-${{ github.run_number }}
           path: |
-            src/Ikemen_GO_android
-            Ikemen_GO_android
-            *.apk
-            export/release/android/bin/app/build/outputs/apk/debug
-        if-no-files-found: warn
+            **/Ikemen_GO_android
+            **/*.apk
+            export/release/android/bin/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: warn
+          retention-days: 7  # 保留7天，避免占用过多存储
