@@ -10,6 +10,10 @@ package main
 #include <android/log.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <stdio.h>
+#include <time.h>
+#include <sys/stat.h>
+#include <sys/system_properties.h>
 #include "SDL.h"
 
 static const char* GetStringUTFChars_Wrapper(JNIEnv* env, jstring str) {
@@ -30,6 +34,42 @@ static void prepare_go_runtime() {
     // cgocheck=0: Stop Go from scanning memory pointers (prevents many A14 crashes)
     // scavenge=off: Stop the background memory reclaimer thread
     setenv("GODEBUG", "asyncpreemptoff=1,sigaltstack=0,cgocheck=0,scavenge=off,installgoroot=0,hardstacklimit=0", 1);
+    
+    // 创建启动日志
+    const char* log_dir = "/sdcard/Android/data/org.ikemen_engine.ikemen_go/files/";
+    const char* log_filename = "ikemen_boot.log";
+    
+    mkdir(log_dir, 0755);
+    
+    char log_path[512];
+    snprintf(log_path, sizeof(log_path), "%s%s", log_dir, log_filename);
+    
+    FILE* log_file = fopen(log_path, "w");
+    if (log_file != NULL) {
+        time_t now = time(NULL);
+        fprintf(log_file, "=== IKEMEN GO Boot Log ===\n");
+        fprintf(log_file, "Boot Time: %s", ctime(&now));
+        
+        char prop[PROP_VALUE_MAX];
+        
+        __system_property_get("ro.build.version.release", prop);
+        fprintf(log_file, "Android Version: %s\n", prop);
+        
+        __system_property_get("ro.product.model", prop);
+        fprintf(log_file, "Device Model: %s\n", prop);
+        
+        __system_property_get("ro.product.manufacturer", prop);
+        fprintf(log_file, "Manufacturer: %s\n", prop);
+        
+        __system_property_get("ro.hardware", prop);
+        fprintf(log_file, "Hardware: %s\n", prop);
+        
+        const char* godebug_val = getenv("GODEBUG");
+        fprintf(log_file, "GODEBUG: %s\n", godebug_val ? godebug_val : "NOT SET");
+        
+        fprintf(log_file, "==========================\n");
+        fclose(log_file);
+    }
 }
 */
 import "C"
