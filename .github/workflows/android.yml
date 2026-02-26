@@ -1,118 +1,96 @@
-name: Android Build CI
-
-on: 
-  workflow_dispatch:
-
-# 添加权限声明 - 这是v4版本upload-artifact必需的
-permissions:
-  contents: read
-  actions: write
-  checks: write
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
+# 在Build之前添加诊断步骤
+- name: Diagnostic - Find Go Files
+  run: |
+    echo "=== Diagnostic Mode ==="
+    echo "1. Current directory structure:"
+    tree -L 3 -I 'node_modules|.git' || find . -type d -maxdepth 3
     
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-          
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.21'
-          cache: true  # 启用Go模块缓存，加速构建
-          
-      - name: Setup Java JDK
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'zulu'
-          java-version: '17'
-        
-      # 修正：使用更稳定的NDK设置方式
-      - name: Setup Android NDK
-        id: setup-ndk
-        uses: nttld/setup-ndk@v1
-        with:
-          ndk-version: r26b
-          link-to-sdk: true  # 重要：链接到SDK路径
-
-      # 修正：setup-android 需要在JDK和NDK之后
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          cmdline-tools-version: 11076708  # 明确指定版本，避免不稳定
-
-      - name: Build Ikemen GO Android
-        env:
-          # 修正：明确设置环境变量，避免路径问题
-          ANDROID_SDK_ROOT: ${{ env.ANDROID_SDK_ROOT }}
-          ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
-          CGO_ENABLED: 1
-          GOOS: android
-          GOARCH: arm64
-          CC: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang
-        run: |
-          echo "=== Debug Info ==="
-          echo "Current directory: $(pwd)"
-          echo "ANDROID_SDK_ROOT: $ANDROID_SDK_ROOT"
-          echo "ANDROID_NDK_ROOT: $ANDROID_NDK_ROOT"
-          ls -la
-          
-          # 查找项目根目录（包含go.mod的目录）
-          PROJECT_ROOT=""
-          if [ -f "go.mod" ]; then
-            PROJECT_ROOT="."
-          elif [ -f "src/go.mod" ]; then
-            PROJECT_ROOT="src"
-          else
-            echo "Searching for go.mod..."
-            PROJECT_ROOT=$(find . -name "go.mod" -type f -not -path "./.git/*" | head -1 | xargs dirname)
-            if [ -z "$PROJECT_ROOT" ]; then
-              echo "Error: go.mod not found!"
-              exit 1
-            fi
-          fi
-          
-          echo "Project root: $PROJECT_ROOT"
-          cd "$PROJECT_ROOT"
-          cat go.mod
-          
-          # 下载依赖
-          go mod tidy
-          go mod download
-          
-          # 构建
-          echo "Starting build..."
-          if [ -f "../build_android.sh" ]; then
-            echo "Using build_android.sh from parent dir..."
-            chmod +x ../build_android.sh
-            cd .. && ./build_android.sh
-          elif [ -f "build_android.sh" ]; then
-            echo "Using local build_android.sh..."
-            chmod +x build_android.sh
-            ./build_android.sh
-          else
-            echo "Building with go build..."
-            go build -v -ldflags="-s -w" -o Ikemen_GO_android .
-          fi
-          
-      - name: List build outputs
-        run: |
-          echo "=== Build outputs ==="
-          find . -name "*.apk" -o -name "Ikemen_GO_android*" 2>/dev/null | head -20
-          ls -la src/ 2>/dev/null || true
-          ls -la export/ 2>/dev/null || true
-          
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: Android-Build-${{ github.run_number }}
-          path: |
-            **/Ikemen_GO_android
-            **/*.apk
-            export/release/android/bin/app/build/outputs/apk/debug/*.apk
-          if-no-files-found: warn
-          retention-days: 7  # 保留7天，避免占用过多存储
+    echo "\n2. Looking for go.mod files:"
+    find . -name "go.mod" -type f
+    
+    echo "\n3. Looking for Go source files:"
+    find . -name "*.go" -type f | head -20
+    
+    echo "\n4. Checking for Android build scripts:"
+    find . -name "*android*.sh" -o -name "build*.sh"
+    
+    echo "\n5. Project structure (if Ikemen-GO typical layout):"
+    # 检查是否是标准的IKEMEN Go布局
+    if [ -d "src" ]; then
+      echo "src/ exists"
+      ls -la src/
+    fi
+    
+    if [ -d "mobile" ]; then
+      echo "mobile/ exists" 
+      ls -la mobile/
+    fi
+# 修正后的Build步骤
+- name: Build Ikemen GO Android
+  env:
+    ANDROID_SDK_ROOT: ${{ env.ANDROID_SDK_ROOT }}
+    ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
+    CGO_ENABLED: 1
+    GOOS: android
+    GOARCH: arm64
+    CC: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang
+    CXX: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang++
+  run: |
+    echo "=== Debug Info ==="
+    pwd
+    ls -la
+    
+    # 安装gomobile工具
+    go install golang.org/x/mobile/cmd/gomobile@latest
+    go install golang.org/x/mobile/cmd/gobind@latest
+    
+    # 初始化gomobile
+    export PATH=$PATH:$(go env GOPATH)/bin
+    gomobile init
+    
+    # 查找正确的源文件位置
+    if [ -d "mobile" ]; then
+      echo "Mobile directory found, building from mobile/"
+      cd mobile
+      
+      # 如果是Flutter项目
+      if [ -f "pubspec.yaml" ]; then
+        echo "Flutter project detected"
+        flutter pub get
+        flutter build apk --release
+      # 如果是纯Go mobile项目  
+      elif [ -f "go.mod" ]; then
+        echo "Go mobile project detected"
+        # 构建Android库
+        gomobile bind -target=android -o Ikemen_GO.aar .
+      fi
+      
+    # 检查是否在src目录有Go文件
+    elif [ -d "src" ] && [ -f "src/main.go" ]; then
+      echo "Building from src/ with gomobile"
+      cd src
+      
+      # 创建Android应用包
+      gomobile build -target=android -o Ikemen_GO.apk .
+      
+    # 检查根目录的Go文件
+    elif [ -f "main.go" ] || [ -f "*.go" ]; then
+      echo "Building from root with gomobile"
+      
+      # 创建Android应用包
+      gomobile build -target=android -o Ikemen_GO.apk .
+      
+    else
+      echo "Searching for Go files..."
+      find . -name "*.go" -type f | head -20
+      
+      # 尝试自动检测
+      if [ -d "cmd/ikemen" ]; then
+        echo "Found cmd/ikemen, building..."
+        cd cmd/ikemen
+        gomobile build -target=android -o Ikemen_GO.apk .
+      else
+        echo "Error: No Go source files found for Android build!"
+        exit 1
+      fi
+    fi
