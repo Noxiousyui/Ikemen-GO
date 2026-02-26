@@ -1,0 +1,63 @@
+name: Android Build CI
+
+# Controls when the workflow will run
+on: [workflow_dispatch]
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # This workflow contains a single job called "build"
+  build:
+    # The type of runner that the job will run on
+    runs-on: ubuntu-latest
+    
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - uses: actions/checkout@v4
+      
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          
+      - name: Setup Android SDK Tools
+        uses: android-actions/setup-android@v3
+        
+      - name: Setup Java JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+        
+      - uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r26b
+
+      # Runs a set of commands using the runners shell
+      - name: Build Ikemen GO Android
+        run: |
+          # 安装必要的依赖
+          sudo apt-get update
+          sudo apt-get install -y libgl1-mesa-dev xorg-dev libasound2-dev
+          
+          # 设置环境变量
+          export ANDROID_SDK=$ANDROID_SDK_ROOT
+          export ANDROID_NDK=$ANDROID_NDK_ROOT
+          
+          # 执行编译脚本（如果仓库中有 build_android.sh）
+          if [ -f "build_android.sh" ]; then
+            chmod +x build_android.sh
+            ./build_android.sh
+          else
+            # 如果没有脚本，使用 go 命令直接编译
+            go mod tidy
+            go build -o Ikemen_GO_android
+          fi
+          
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Android Build
+          path: |
+            export/release/android/bin/app/build/outputs/apk/debug
+            Ikemen_GO_android
+            *.apk
