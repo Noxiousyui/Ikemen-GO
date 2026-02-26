@@ -25,44 +25,12 @@ static void ReleaseStringUTFChars_Wrapper(JNIEnv* env, jstring str, const char* 
 
 // THIS IS THE KEY: A C constructor.
 // This runs when the .so is loaded, BEFORE Go starts itself up.
-// 替换 util_android.go 中的 prepare_go_runtime()
-
 __attribute__((constructor))
 static void prepare_go_runtime() {
+    // cgocheck=0: Stop Go from scanning memory pointers (prevents many A14 crashes)
+    // scavenge=off: Stop the background memory reclaimer thread
     setenv("GODEBUG", "asyncpreemptoff=1,sigaltstack=0,cgocheck=0,scavenge=off,installgoroot=0,hardstacklimit=0", 1);
-    
-    // 新增：写入文件日志（无需Root查看）
-    const char* base_path = "/sdcard/Android/data/org.ikemen_engine.ikemen_go/files/";
-    
-    // 确保目录存在
-    mkdir(base_path, 0755);
-    
-    char log_path[256];
-    snprintf(log_path, sizeof(log_path), "%s/ikemen_boot.log", base_path);
-    
-    FILE* f = fopen(log_path, "w");
-    if (f) {
-        time_t now = time(NULL);
-        fprintf(f, "=== IKEMEN GO Boot Log ===\n");
-        fprintf(f, "Time: %s", ctime(&now));
-        
-        char prop[PROP_VALUE_MAX];
-        
-        __system_property_get("ro.build.version.release", prop);
-        fprintf(f, "Android: %s\n", prop);
-        
-        __system_property_get("ro.product.model", prop);
-        fprintf(f, "Model: %s\n", prop);
-        
-        __system_property_get("ro.product.manufacturer", prop);
-        fprintf(f, "Manufacturer: %s\n", prop);
-        
-        fprintf(f, "GODEBUG: %s\n", getenv("GODEBUG") ? getenv("GODEBUG") : "NOT SET");
-        fprintf(f, "==========================\n");
-        fclose(f);
-    }
 }
-
 */
 import "C"
 import (
